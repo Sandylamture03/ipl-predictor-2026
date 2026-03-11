@@ -1,0 +1,18 @@
+{
+  "name": "ipl-predictor-2026",
+  "version": "1.0.0",
+  "private": true,
+  "description": "IPL 2026 Win Predictor — Full Stack AI Platform",
+  "scripts": {
+    "dev:web": "cd apps/web && npm run dev",
+    "dev:api": "cd apps/api && npm run dev",
+    "build:web": "cd apps/web && npm run build",
+    "install:all": "cd apps/web && npm install && cd ../api && npm install"
+  },
+  "engines": { "node": ">=18.0.0" },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "pg": "^8.20.0"
+  }
+}
+

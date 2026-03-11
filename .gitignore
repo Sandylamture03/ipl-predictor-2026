@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Build outputs
+dist/
+build/
+*.js.map
+
+# Environment & secrets
+.env
+.env.local
+.env.production
+
+# ML model artifacts (large binary files)
+services/ml/artifacts/*.pkl
+services/ml/artifacts/*.model
+
+# Cricsheet raw data (too large for git — 50MB+)
+data/cricsheet/ipl_json.zip
+data/cricsheet/*.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+infra/postgres-data/

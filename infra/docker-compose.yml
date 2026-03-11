@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ipl_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ipl_predictor
+      POSTGRES_USER: ipl_user
+      POSTGRES_PASSWORD: ipl_pass_2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../apps/api/src/db/migrations:/docker-entrypoint-initdb.d
+
+  redis:
+    image: redis:7-alpine
+    container_name: ipl_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      context: ../apps/api
+      dockerfile: ../../infra/api.Dockerfile
+    container_name: ipl_api
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgres://ipl_user:ipl_pass_2026@db:5432/ipl_predictor
+      REDIS_URL: redis://redis:6379
+      PORT: 3001
+      NODE_ENV: development
+    volumes:
+      - ../apps/api:/app
+      - /app/node_modules
+
+  ml:
+    build:
+      context: ../services/ml
+      dockerfile: ../../infra/ml.Dockerfile
+    container_name: ipl_ml
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgres://ipl_user:ipl_pass_2026@db:5432/ipl_predictor
+    volumes:
+      - ../services/ml:/app
+
+volumes:
+  postgres_data:
