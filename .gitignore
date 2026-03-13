@@ -15,11 +15,12 @@ build/
 .env.local
 .env.production
 
-# ML model artifacts (large binary files)
+# ML model artifacts (binary files)
 services/ml/artifacts/*.pkl
 services/ml/artifacts/*.model
+!services/ml/artifacts/live_match_v1.pkl
 
-# Cricsheet raw data (too large for git — 50MB+)
+# Cricsheet raw data (large files)
 data/cricsheet/ipl_json.zip
 data/cricsheet/*.json
 

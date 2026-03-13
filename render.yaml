@@ -54,5 +54,7 @@ services:
         sync: false
       - key: AUTO_TRAIN_PREMATCH
         value: "1"
+      - key: AUTO_TRAIN_LIVE
+        value: "0"
       - key: PYTHON_VERSION
         value: 3.11.9

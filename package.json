@@ -2,7 +2,7 @@
   "name": "ipl-predictor-2026",
   "version": "1.0.0",
   "private": true,
-  "description": "IPL 2026 Win Predictor — Full Stack AI Platform",
+  "description": "IPL 2026 Win Predictor - Full Stack AI Platform",
   "scripts": {
     "dev:web": "cd apps/web && npm run dev",
     "dev:api": "cd apps/api && npm run dev",
@@ -12,9 +12,12 @@
     "data:forms": "node scripts/build_form_snapshots.js .\\data\\cricsheet",
     "data:fixtures": "node scripts/sync_ipl_2026_fixtures.js",
     "deploy:render:auto": "node scripts/render_full_deploy.js",
-    "ml:train": "cd services/ml && .\\.venv\\Scripts\\python -m src.training.train_pre_match"
+    "ml:train": "cd services/ml && .\\.venv\\Scripts\\python -m src.training.train_pre_match",
+    "ml:train:live": "cd services/ml && .\\.venv\\Scripts\\python -m src.training.train_live_match"
   },
-  "engines": { "node": ">=18.0.0" },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "dotenv": "^17.3.1",
     "pg": "^8.20.0"
