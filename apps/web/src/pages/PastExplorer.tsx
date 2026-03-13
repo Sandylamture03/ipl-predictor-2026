@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import MatchCard from '../components/MatchCard'
-import { MOCK_MATCHES } from '../hooks/useMockData'
+import { useMatches } from '../hooks/useApiData'
 
 const TEAMS = ['All Teams', 'CSK', 'MI', 'RCB', 'KKR', 'GT', 'RR', 'LSG', 'SRH', 'DC', 'PBKS']
 
 export default function PastExplorer() {
   const [teamFilter, setTeamFilter] = useState('All Teams')
-  const completed = MOCK_MATCHES.filter(m => m.status === 'completed')
+  const { allMatches, loading } = useMatches()
+
+  const completed = allMatches.filter(m => String(m.status).toLowerCase() === 'completed')
   const filtered = completed.filter(m =>
     teamFilter === 'All Teams' || m.team1_short === teamFilter || m.team2_short === teamFilter
   )
@@ -27,12 +29,14 @@ export default function PastExplorer() {
         ))}
       </div>
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="spinner" />
+      ) : filtered.length === 0 ? (
         <div className="empty-state">
-          <div className="icon">📂</div>
-          <p>No completed matches yet. Import Cricsheet data to populate history.</p>
-          <p style={{marginTop:8, fontSize:'0.85rem', color:'var(--text-muted)'}}>
-            Run: <code style={{color:'var(--accent-blue)'}}>npx ts-node scripts/import_cricsheet.ts</code>
+          <div className="icon">History</div>
+          <p>No completed matches found in the database.</p>
+          <p style={{ marginTop: 8, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+            Run: <code style={{ color: 'var(--accent-blue)' }}>node scripts/import_cricsheet.js .\data\cricsheet</code>
           </p>
         </div>
       ) : (

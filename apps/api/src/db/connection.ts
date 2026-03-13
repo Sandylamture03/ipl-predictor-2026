@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgres://ipl_user:ipl_pass_2026@localhost:5432/ipl_predictor',
+  connectionString: process.env.DATABASE_URL || 'postgres://ipl_user:ipl_pass_2026@127.0.0.1:5432/ipl_predictor',
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,

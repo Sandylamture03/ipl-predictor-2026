@@ -26,7 +26,7 @@ export function useLiveMatches() {
       try {
         const data = await apiFetch('/api/live')
         if (!cancelled) {
-          setMatches(data.matches || [])
+          setMatches(data.matches || data.data || [])
         }
       } catch {
         // API not running yet — use mock live matches
@@ -53,14 +53,16 @@ export function useMatches() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    apiFetch('/api/matches?status=upcoming')
-      .then(d => setAllMatches(d.matches || []))
+    apiFetch('/api/matches?limit=2000&offset=0')
+      .then(d => setAllMatches((d.matches || d.data || []).map(adaptMock)))
       .catch(() => setAllMatches(MOCK_MATCHES.map(adaptMock)))
       .finally(() => setLoading(false))
   }, [])
 
   const liveMatches = allMatches.filter(m => m.is_live || m.status === 'live')
-  const upcomingMatches = allMatches.filter(m => m.status === 'upcoming')
+  const upcomingMatches = allMatches.filter(
+    m => m.status === 'upcoming' || m.status === 'scheduled'
+  )
 
   return { allMatches, liveMatches, upcomingMatches, loading }
 }
@@ -72,7 +74,7 @@ export function useMatchDetail(id: number | string) {
 
   useEffect(() => {
     apiFetch(`/api/matches/${id}`)
-      .then(d => setMatch(d.match || d))
+      .then(d => setMatch(d.match || d.data || d))
       .catch(() => setMatch(MOCK_MATCHES.find(m => m.id === Number(id)) || null))
       .finally(() => setLoading(false))
   }, [id])
@@ -82,6 +84,14 @@ export function useMatchDetail(id: number | string) {
 
 // ── Adapt live API match to the UI's expected shape ───────────
 function adaptMock(m: any) {
+  const status = String(m.status || '').toLowerCase()
+  const normalizedStatus =
+    status === 'upcoming' || status === 'scheduled' || status === 'completed' || status === 'live'
+      ? status
+      : m.matchEnded
+        ? 'completed'
+        : (m.matchStarted ? 'live' : 'upcoming')
+
   return {
     ...m,
     team1_short: m.team1_short || m.teams?.[0]?.substring(0, 5).toUpperCase() || 'T1',
@@ -91,6 +101,6 @@ function adaptMock(m: any) {
     team1_color: m.team1_color || '#004E92',
     team2_color: m.team2_color || '#EC1C24',
     is_live:     m.is_live || (m.matchStarted && !m.matchEnded),
-    status:      m.status === 'upcoming' ? 'upcoming' : m.matchEnded ? 'completed' : 'live',
+    status:      normalizedStatus,
   }
 }

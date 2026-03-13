@@ -3,7 +3,7 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-DB_URL = os.environ.get("DATABASE_URL", "postgres://ipl_user:ipl_pass_2026@localhost:5432/ipl_predictor")
+DB_URL = os.environ.get("DATABASE_URL", "postgres://ipl_user:ipl_pass_2026@127.0.0.1:5432/ipl_predictor")
 
 
 def predict_live(match_id: int) -> dict:

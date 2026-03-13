@@ -7,7 +7,11 @@
     "dev:web": "cd apps/web && npm run dev",
     "dev:api": "cd apps/api && npm run dev",
     "build:web": "cd apps/web && npm run build",
-    "install:all": "cd apps/web && npm install && cd ../api && npm install"
+    "install:all": "cd apps/web && npm install && cd ../api && npm install",
+    "data:import": "node scripts/import_cricsheet.js .\\data\\cricsheet",
+    "data:forms": "node scripts/build_form_snapshots.js .\\data\\cricsheet",
+    "data:fixtures": "node scripts/sync_ipl_2026_fixtures.js",
+    "ml:train": "cd services/ml && .\\.venv\\Scripts\\python -m src.training.train_pre_match"
   },
   "engines": { "node": ">=18.0.0" },
   "dependencies": {
@@ -15,4 +19,3 @@
     "pg": "^8.20.0"
   }
 }
-

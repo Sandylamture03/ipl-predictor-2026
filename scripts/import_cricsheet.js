@@ -7,6 +7,8 @@
 'use strict';
 const fs   = require('fs');
 const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+require('dotenv').config();
 const { Pool } = require('pg');
 
 const DB_URL = process.env.DATABASE_URL;

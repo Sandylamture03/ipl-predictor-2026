@@ -1,16 +1,18 @@
 import { useState } from 'react'
 import MatchCard from '../components/MatchCard'
-import { useMockMatches } from '../hooks/useMockData'
+import { useMatches } from '../hooks/useApiData'
 
 const FILTERS = ['All', 'Upcoming', 'Live', 'Completed']
 
 export default function UpcomingMatches() {
   const [filter, setFilter] = useState('All')
-  const { allMatches, loading } = useMockMatches()
+  const { allMatches, loading } = useMatches()
 
   const filtered = allMatches.filter(m => {
     if (filter === 'All') return true
-    return m.status.toLowerCase() === filter.toLowerCase()
+    const status = String(m.status || '').toLowerCase()
+    if (filter === 'Upcoming') return status === 'upcoming' || status === 'scheduled'
+    return status === filter.toLowerCase()
   })
 
   return (
