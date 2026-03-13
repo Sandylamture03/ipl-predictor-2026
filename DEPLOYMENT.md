@@ -32,6 +32,24 @@ Notes:
 - `ipl-web` gets `VITE_API_URL` from `ipl-api` automatically.
 - `ipl-ml` auto-trains pre-match model if artifact is missing (`AUTO_TRAIN_PREMATCH=1`).
 
+### Optional: Fully automated via Render API
+
+If you have a Render API key, you can create/update services + env vars + domains from terminal:
+
+```bash
+RENDER_API_KEY=...
+DATABASE_URL=...
+CRICKET_API_KEY=...
+node scripts/render_full_deploy.js
+```
+
+Optional env vars:
+- `RENDER_OWNER_ID` (workspace id, auto-detected if omitted)
+- `RENDER_REPO_URL` (defaults to this repo)
+- `RENDER_REPO_BRANCH` (default `main`)
+- `DOMAIN_ROOT` (default `ai-developer.in`)
+- `ENABLE_ML_PUBLIC_DOMAIN=1` (to publish `ml.<domain>`)
+
 ## 3) Verify Health
 
 After deploy, confirm:
