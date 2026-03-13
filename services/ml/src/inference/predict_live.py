@@ -16,6 +16,13 @@ DB_URL = os.environ.get(
 ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "../../artifacts")
 LIVE_MODEL_PATH = os.path.join(ARTIFACTS_DIR, "live_match_v1.pkl")
 
+NON_BOWLER_WICKET_KINDS = {
+    "run out",
+    "retired hurt",
+    "retired out",
+    "obstructing the field",
+}
+
 FEATURE_COLS = [
     "innings_number",
     "batting_team_is_t1",
@@ -36,6 +43,24 @@ FEATURE_COLS = [
     "recent_runs_12",
     "recent_wkts_12",
     "recent_boundaries_12",
+    "recent_runs_6",
+    "recent_wkts_6",
+    "recent_boundaries_6",
+    "dot_balls_12",
+    "momentum_delta_runs_6",
+    "striker_runs",
+    "striker_balls",
+    "striker_sr",
+    "non_striker_runs",
+    "non_striker_balls",
+    "non_striker_sr",
+    "bowler_balls",
+    "bowler_runs_conceded",
+    "bowler_wkts",
+    "bowler_econ",
+    "partnership_runs",
+    "partnership_balls",
+    "partnership_run_rate",
 ]
 
 _LIVE_ARTIFACT = None
@@ -54,6 +79,12 @@ def _safe_float(value, default=0.0):
         return float(value)
     except Exception:
         return default
+
+
+def _tail_sum(values, n: int) -> float:
+    if not values:
+        return 0.0
+    return float(sum(values[-n:]))
 
 
 def _overs_to_balls(overs_value) -> int:
@@ -103,34 +134,238 @@ def _infer_batting_team_id(state):
     return _other_team(first_innings_batting, team1_id, team2_id) or team2_id
 
 
-def _fetch_recent_window(cur, match_id: int, innings_number: int):
+def _is_legal_delivery_row(row) -> bool:
+    if row.get("legal_ball_number") is not None:
+        return True
+    extra_type = str(row.get("extra_type") or "").strip().lower()
+    return extra_type not in ("wides", "noballs")
+
+
+def _is_ball_faced_row(row) -> bool:
+    extra_type = str(row.get("extra_type") or "").strip().lower()
+    return extra_type != "wides"
+
+
+def _bowler_runs_conceded_row(row) -> float:
+    runs_total = _safe_float(row.get("runs_total"), 0.0)
+    extra_type = str(row.get("extra_type") or "").strip().lower()
+    extra_runs = _safe_float(row.get("extra_runs"), 0.0)
+    if extra_type in ("byes", "legbyes"):
+        return runs_total - extra_runs
+    return runs_total
+
+
+def _is_bowler_wicket_row(row) -> bool:
+    if not row.get("is_wicket"):
+        return False
+    kind = str(row.get("wicket_kind") or "").strip().lower()
+    if not kind:
+        return False
+    return kind not in NON_BOWLER_WICKET_KINDS
+
+
+def _empty_context() -> dict:
+    return {
+        "recent_runs_12": 0.0,
+        "recent_wkts_12": 0.0,
+        "recent_boundaries_12": 0.0,
+        "recent_runs_6": 0.0,
+        "recent_wkts_6": 0.0,
+        "recent_boundaries_6": 0.0,
+        "dot_balls_12": 0.0,
+        "momentum_delta_runs_6": 0.0,
+        "striker_runs": 0.0,
+        "striker_balls": 0.0,
+        "striker_sr": 0.0,
+        "non_striker_runs": 0.0,
+        "non_striker_balls": 0.0,
+        "non_striker_sr": 0.0,
+        "bowler_balls": 0.0,
+        "bowler_runs_conceded": 0.0,
+        "bowler_wkts": 0.0,
+        "bowler_econ": 0.0,
+        "partnership_runs": 0.0,
+        "partnership_balls": 0.0,
+        "partnership_run_rate": 0.0,
+    }
+
+
+def _resolve_active_ids(rows, striker_id: int, non_striker_id: int, bowler_id: int):
+    active_striker = striker_id if striker_id > 0 else 0
+    active_non_striker = non_striker_id if non_striker_id > 0 else 0
+    active_bowler = bowler_id if bowler_id > 0 else 0
+
+    if not rows:
+        return active_striker, active_non_striker, active_bowler
+
+    if active_striker <= 0:
+        for row in reversed(rows):
+            bid = _safe_int(row.get("batter_id"), 0)
+            if bid > 0:
+                active_striker = bid
+                break
+
+    if active_non_striker <= 0:
+        for row in reversed(rows):
+            nsid = _safe_int(row.get("non_striker_id"), 0)
+            if nsid > 0:
+                active_non_striker = nsid
+                break
+
+    if active_bowler <= 0:
+        for row in reversed(rows):
+            boid = _safe_int(row.get("bowler_id"), 0)
+            if boid > 0:
+                active_bowler = boid
+                break
+
+    return active_striker, active_non_striker, active_bowler
+
+
+def _fetch_innings_context(
+    cur,
+    match_id: int,
+    innings_number: int,
+    striker_id: int,
+    non_striker_id: int,
+    bowler_id: int,
+):
     cur.execute(
         """
-        SELECT runs_total, is_wicket, is_boundary_four, is_boundary_six
+        SELECT
+          batter_id,
+          non_striker_id,
+          bowler_id,
+          runs_batter,
+          runs_total,
+          extra_type,
+          extra_runs,
+          is_wicket,
+          wicket_kind,
+          is_boundary_four,
+          is_boundary_six,
+          legal_ball_number,
+          over_number,
+          ball_in_over
         FROM deliveries
         WHERE match_id = %s
           AND innings_number = %s
-          AND legal_ball_number IS NOT NULL
-        ORDER BY over_number DESC, ball_in_over DESC
-        LIMIT 12
+        ORDER BY over_number ASC, ball_in_over ASC
         """,
         (match_id, innings_number),
     )
-    recent = cur.fetchall() or []
-    recent_runs = float(sum(_safe_int(r.get("runs_total"), 0) for r in recent))
-    recent_wkts = float(sum(1 if r.get("is_wicket") else 0 for r in recent))
-    recent_boundaries = float(
-        sum(1 if (r.get("is_boundary_four") or r.get("is_boundary_six")) else 0 for r in recent)
+    rows = cur.fetchall() or []
+    if not rows:
+        return _empty_context()
+
+    active_striker, active_non_striker, active_bowler = _resolve_active_ids(
+        rows,
+        striker_id,
+        non_striker_id,
+        bowler_id,
     )
-    return recent_runs, recent_wkts, recent_boundaries
+
+    legal_runs = []
+    legal_wkts = []
+    legal_boundaries = []
+    legal_dots = []
+
+    striker_runs = 0.0
+    striker_balls = 0.0
+    non_striker_runs = 0.0
+    non_striker_balls = 0.0
+    bowler_balls = 0.0
+    bowler_runs_conceded = 0.0
+    bowler_wkts = 0.0
+
+    partnership_runs = 0.0
+    partnership_balls = 0.0
+
+    for row in rows:
+        runs_total = _safe_float(row.get("runs_total"), 0.0)
+        runs_batter = _safe_float(row.get("runs_batter"), 0.0)
+
+        batter_row_id = _safe_int(row.get("batter_id"), 0)
+        bowler_row_id = _safe_int(row.get("bowler_id"), 0)
+
+        legal = _is_legal_delivery_row(row)
+        ball_faced = _is_ball_faced_row(row)
+        wicket = bool(row.get("is_wicket"))
+        boundary = bool(row.get("is_boundary_four") or row.get("is_boundary_six"))
+
+        if active_striker > 0 and batter_row_id == active_striker:
+            striker_runs += runs_batter
+            if ball_faced:
+                striker_balls += 1
+
+        if active_non_striker > 0 and batter_row_id == active_non_striker:
+            non_striker_runs += runs_batter
+            if ball_faced:
+                non_striker_balls += 1
+
+        if active_bowler > 0 and bowler_row_id == active_bowler:
+            bowler_runs_conceded += _bowler_runs_conceded_row(row)
+            if legal:
+                bowler_balls += 1
+            if _is_bowler_wicket_row(row):
+                bowler_wkts += 1
+
+        partnership_runs += runs_total
+        if legal:
+            partnership_balls += 1
+
+        if legal:
+            legal_runs.append(runs_total)
+            legal_wkts.append(1.0 if wicket else 0.0)
+            legal_boundaries.append(1.0 if boundary else 0.0)
+            legal_dots.append(1.0 if runs_total == 0 else 0.0)
+
+        if wicket:
+            partnership_runs = 0.0
+            partnership_balls = 0.0
+
+    recent_runs_12 = _tail_sum(legal_runs, 12)
+    recent_wkts_12 = _tail_sum(legal_wkts, 12)
+    recent_boundaries_12 = _tail_sum(legal_boundaries, 12)
+    recent_runs_6 = _tail_sum(legal_runs, 6)
+    recent_wkts_6 = _tail_sum(legal_wkts, 6)
+    recent_boundaries_6 = _tail_sum(legal_boundaries, 6)
+    dot_balls_12 = _tail_sum(legal_dots, 12)
+
+    prev_runs_6 = float(sum(legal_runs[-12:-6])) if len(legal_runs) > 6 else 0.0
+    momentum_delta_runs_6 = recent_runs_6 - prev_runs_6
+
+    striker_sr = (striker_runs * 100.0) / max(striker_balls, 1.0)
+    non_striker_sr = (non_striker_runs * 100.0) / max(non_striker_balls, 1.0)
+    bowler_econ = (bowler_runs_conceded * 6.0) / max(bowler_balls, 1.0)
+    partnership_run_rate = (partnership_runs * 6.0) / max(partnership_balls, 1.0)
+
+    return {
+        "recent_runs_12": float(recent_runs_12),
+        "recent_wkts_12": float(recent_wkts_12),
+        "recent_boundaries_12": float(recent_boundaries_12),
+        "recent_runs_6": float(recent_runs_6),
+        "recent_wkts_6": float(recent_wkts_6),
+        "recent_boundaries_6": float(recent_boundaries_6),
+        "dot_balls_12": float(dot_balls_12),
+        "momentum_delta_runs_6": float(round(momentum_delta_runs_6, 4)),
+        "striker_runs": float(striker_runs),
+        "striker_balls": float(striker_balls),
+        "striker_sr": float(round(striker_sr, 4)),
+        "non_striker_runs": float(non_striker_runs),
+        "non_striker_balls": float(non_striker_balls),
+        "non_striker_sr": float(round(non_striker_sr, 4)),
+        "bowler_balls": float(bowler_balls),
+        "bowler_runs_conceded": float(bowler_runs_conceded),
+        "bowler_wkts": float(bowler_wkts),
+        "bowler_econ": float(round(bowler_econ, 4)),
+        "partnership_runs": float(partnership_runs),
+        "partnership_balls": float(partnership_balls),
+        "partnership_run_rate": float(round(partnership_run_rate, 4)),
+    }
 
 
-def _build_features(
-    state,
-    recent_runs_12: float,
-    recent_wkts_12: float,
-    recent_boundaries_12: float,
-):
+def _build_features(state, ctx: dict):
     innings_number = max(1, _safe_int(state.get("innings_number"), 1))
     team1_id = _safe_int(state.get("team1_id"), 0)
     batting_team_id = _infer_batting_team_id(state)
@@ -181,9 +416,27 @@ def _build_features(
         "projected_total": float(round(projected_total, 4)),
         "progress_pct": float(round(progress_pct, 4)),
         "required_per_wicket": float(round(required_per_wicket, 4)),
-        "recent_runs_12": float(recent_runs_12),
-        "recent_wkts_12": float(recent_wkts_12),
-        "recent_boundaries_12": float(recent_boundaries_12),
+        "recent_runs_12": float(ctx.get("recent_runs_12", 0.0)),
+        "recent_wkts_12": float(ctx.get("recent_wkts_12", 0.0)),
+        "recent_boundaries_12": float(ctx.get("recent_boundaries_12", 0.0)),
+        "recent_runs_6": float(ctx.get("recent_runs_6", 0.0)),
+        "recent_wkts_6": float(ctx.get("recent_wkts_6", 0.0)),
+        "recent_boundaries_6": float(ctx.get("recent_boundaries_6", 0.0)),
+        "dot_balls_12": float(ctx.get("dot_balls_12", 0.0)),
+        "momentum_delta_runs_6": float(ctx.get("momentum_delta_runs_6", 0.0)),
+        "striker_runs": float(ctx.get("striker_runs", 0.0)),
+        "striker_balls": float(ctx.get("striker_balls", 0.0)),
+        "striker_sr": float(ctx.get("striker_sr", 0.0)),
+        "non_striker_runs": float(ctx.get("non_striker_runs", 0.0)),
+        "non_striker_balls": float(ctx.get("non_striker_balls", 0.0)),
+        "non_striker_sr": float(ctx.get("non_striker_sr", 0.0)),
+        "bowler_balls": float(ctx.get("bowler_balls", 0.0)),
+        "bowler_runs_conceded": float(ctx.get("bowler_runs_conceded", 0.0)),
+        "bowler_wkts": float(ctx.get("bowler_wkts", 0.0)),
+        "bowler_econ": float(ctx.get("bowler_econ", 0.0)),
+        "partnership_runs": float(ctx.get("partnership_runs", 0.0)),
+        "partnership_balls": float(ctx.get("partnership_balls", 0.0)),
+        "partnership_run_rate": float(ctx.get("partnership_run_rate", 0.0)),
     }
 
 
@@ -265,10 +518,16 @@ def predict_live(match_id: int) -> dict:
             }
 
         innings_number = max(1, _safe_int(state.get("innings_number"), 1))
-        recent_runs_12, recent_wkts_12, recent_boundaries_12 = _fetch_recent_window(
-            cur, match_id, innings_number
+
+        ctx = _fetch_innings_context(
+            cur,
+            match_id,
+            innings_number,
+            _safe_int(state.get("striker_id"), 0),
+            _safe_int(state.get("non_striker_id"), 0),
+            _safe_int(state.get("bowler_id"), 0),
         )
-        features = _build_features(state, recent_runs_12, recent_wkts_12, recent_boundaries_12)
+        features = _build_features(state, ctx)
 
         artifact = _load_live_artifact()
         batting_team_is_t1 = bool(int(features["batting_team_is_t1"]))
@@ -286,12 +545,12 @@ def predict_live(match_id: int) -> dict:
 
             return {
                 "match_id": match_id,
-                "model_version": artifact.get("version", "live_ml_v2"),
+                "model_version": artifact.get("version", "live_ml_v3"),
                 "team1_win_prob": round(float(team1_prob), 4),
                 "team2_win_prob": round(float(1.0 - team1_prob), 4),
                 "features": features,
                 "explanation": {
-                    "note": "Trained live model (ball-by-ball historical states).",
+                    "note": "Trained live model with player-on-crease, bowler, and momentum features.",
                     "model_kind": artifact.get("model_kind", "live_ml"),
                     "metrics": {
                         "accuracy": artifact.get("accuracy"),

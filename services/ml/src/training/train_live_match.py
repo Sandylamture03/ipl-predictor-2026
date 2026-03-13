@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from collections import deque
+from collections import defaultdict, deque
 from typing import Dict, List
 
 import joblib
@@ -29,6 +29,13 @@ os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
 ARTIFACT_PATH = os.path.join(ARTIFACTS_DIR, "live_match_v1.pkl")
 
+NON_BOWLER_WICKET_KINDS = {
+    "run out",
+    "retired hurt",
+    "retired out",
+    "obstructing the field",
+}
+
 FEATURE_COLS = [
     "innings_number",
     "batting_team_is_t1",
@@ -49,12 +56,61 @@ FEATURE_COLS = [
     "recent_runs_12",
     "recent_wkts_12",
     "recent_boundaries_12",
+    "recent_runs_6",
+    "recent_wkts_6",
+    "recent_boundaries_6",
+    "dot_balls_12",
+    "momentum_delta_runs_6",
+    "striker_runs",
+    "striker_balls",
+    "striker_sr",
+    "non_striker_runs",
+    "non_striker_balls",
+    "non_striker_sr",
+    "bowler_balls",
+    "bowler_runs_conceded",
+    "bowler_wkts",
+    "bowler_econ",
+    "partnership_runs",
+    "partnership_balls",
+    "partnership_run_rate",
 ]
 
 
 def is_legal_ball(delivery: Dict) -> bool:
     extras = delivery.get("extras") or {}
     return extras.get("wides") is None and extras.get("noballs") is None
+
+
+def is_ball_faced(delivery: Dict) -> bool:
+    extras = delivery.get("extras") or {}
+    return extras.get("wides") is None
+
+
+def runs_conceded_by_bowler(delivery: Dict) -> int:
+    runs_obj = delivery.get("runs") or {}
+    total = int(runs_obj.get("total") or 0)
+    extras = delivery.get("extras") or {}
+    byes = int(extras.get("byes") or 0)
+    legbyes = int(extras.get("legbyes") or 0)
+    return total - byes - legbyes
+
+
+def is_bowler_wicket(wicket_obj: Dict) -> bool:
+    kind = str((wicket_obj or {}).get("kind") or "").strip().lower()
+    if not kind:
+        return False
+    return kind not in NON_BOWLER_WICKET_KINDS
+
+
+def player_key(name) -> str:
+    return str(name or "").strip().lower()
+
+
+def tail_sum(values: List[float], n: int) -> float:
+    if not values:
+        return 0.0
+    return float(sum(values[-n:]))
 
 
 def parse_match_rows(file_path: str) -> List[Dict]:
@@ -89,9 +145,17 @@ def parse_match_rows(file_path: str) -> List[Dict]:
         legal_balls = 0
         score = 0
         wickets = 0
-        recent_runs = deque(maxlen=12)
-        recent_wkts = deque(maxlen=12)
-        recent_boundaries = deque(maxlen=12)
+
+        recent_runs = deque(maxlen=24)
+        recent_wkts = deque(maxlen=24)
+        recent_boundaries = deque(maxlen=24)
+        recent_dots = deque(maxlen=24)
+
+        batter_stats = defaultdict(lambda: {"runs": 0.0, "balls": 0.0})
+        bowler_stats = defaultdict(lambda: {"runs": 0.0, "balls": 0.0, "wkts": 0.0})
+
+        partnership_runs = 0.0
+        partnership_balls = 0.0
 
         overs = inn.get("overs") or []
         for ov in overs:
@@ -100,17 +164,45 @@ def parse_match_rows(file_path: str) -> List[Dict]:
                 runs_obj = delivery.get("runs") or {}
                 runs_total = int(runs_obj.get("total") or 0)
                 runs_batter = int(runs_obj.get("batter") or 0)
-                wicket_fell = 1 if (delivery.get("wickets") or []) else 0
+                wickets_list = delivery.get("wickets") or []
+                wicket_count = int(len(wickets_list))
                 boundary = 1 if runs_batter in (4, 6) else 0
 
-                score += runs_total
-                wickets += wicket_fell
+                batter = player_key(delivery.get("batter"))
+                non_striker = player_key(delivery.get("non_striker"))
+                bowler = player_key(delivery.get("bowler"))
 
-                if is_legal_ball(delivery):
+                legal_ball = is_legal_ball(delivery)
+                ball_faced = is_ball_faced(delivery)
+
+                score += runs_total
+                wickets += wicket_count
+
+                if batter:
+                    batter_stats[batter]["runs"] += runs_batter
+                    if ball_faced:
+                        batter_stats[batter]["balls"] += 1
+                if non_striker:
+                    _ = batter_stats[non_striker]
+
+                if bowler:
+                    bowler_stats[bowler]["runs"] += runs_conceded_by_bowler(delivery)
+                    if legal_ball:
+                        bowler_stats[bowler]["balls"] += 1
+                    for wicket_obj in wickets_list:
+                        if is_bowler_wicket(wicket_obj):
+                            bowler_stats[bowler]["wkts"] += 1
+
+                partnership_runs += runs_total
+
+                if legal_ball:
                     legal_balls = min(120, legal_balls + 1)
-                    recent_runs.append(runs_total)
-                    recent_wkts.append(wicket_fell)
-                    recent_boundaries.append(boundary)
+                    partnership_balls += 1
+
+                    recent_runs.append(float(runs_total))
+                    recent_wkts.append(float(wicket_count))
+                    recent_boundaries.append(float(boundary))
+                    recent_dots.append(1.0 if runs_total == 0 else 0.0)
 
                 balls_bowled = legal_balls
                 balls_left = max(120 - balls_bowled, 0)
@@ -138,6 +230,46 @@ def parse_match_rows(file_path: str) -> List[Dict]:
                     runs_needed / max(wickets_left, 1) if target else 0.0
                 )
 
+                rr = list(recent_runs)
+                rw = list(recent_wkts)
+                rb = list(recent_boundaries)
+                rd = list(recent_dots)
+
+                recent_runs_12 = tail_sum(rr, 12)
+                recent_wkts_12 = tail_sum(rw, 12)
+                recent_boundaries_12 = tail_sum(rb, 12)
+
+                recent_runs_6 = tail_sum(rr, 6)
+                recent_wkts_6 = tail_sum(rw, 6)
+                recent_boundaries_6 = tail_sum(rb, 6)
+                dot_balls_12 = tail_sum(rd, 12)
+
+                prev_runs_6 = float(sum(rr[-12:-6])) if len(rr) > 6 else 0.0
+                momentum_delta_runs_6 = recent_runs_6 - prev_runs_6
+
+                striker_stats = batter_stats[batter] if batter else {"runs": 0.0, "balls": 0.0}
+                non_striker_stats = (
+                    batter_stats[non_striker] if non_striker else {"runs": 0.0, "balls": 0.0}
+                )
+                bowler_row = (
+                    bowler_stats[bowler] if bowler else {"runs": 0.0, "balls": 0.0, "wkts": 0.0}
+                )
+
+                striker_runs = float(striker_stats["runs"])
+                striker_balls = float(striker_stats["balls"])
+                striker_sr = (striker_runs * 100.0) / max(striker_balls, 1.0)
+
+                non_striker_runs = float(non_striker_stats["runs"])
+                non_striker_balls = float(non_striker_stats["balls"])
+                non_striker_sr = (non_striker_runs * 100.0) / max(non_striker_balls, 1.0)
+
+                bowler_balls = float(bowler_row["balls"])
+                bowler_runs_conceded = float(bowler_row["runs"])
+                bowler_wkts = float(bowler_row["wkts"])
+                bowler_econ = (bowler_runs_conceded * 6.0) / max(bowler_balls, 1.0)
+
+                partnership_run_rate = (partnership_runs * 6.0) / max(partnership_balls, 1.0)
+
                 rows.append(
                     {
                         "match_ref": match_ref,
@@ -158,12 +290,34 @@ def parse_match_rows(file_path: str) -> List[Dict]:
                         "projected_total": float(round(projected_total, 4)),
                         "progress_pct": float(round(progress_pct, 4)),
                         "required_per_wicket": float(round(required_per_wicket, 4)),
-                        "recent_runs_12": float(sum(recent_runs)),
-                        "recent_wkts_12": float(sum(recent_wkts)),
-                        "recent_boundaries_12": float(sum(recent_boundaries)),
+                        "recent_runs_12": float(recent_runs_12),
+                        "recent_wkts_12": float(recent_wkts_12),
+                        "recent_boundaries_12": float(recent_boundaries_12),
+                        "recent_runs_6": float(recent_runs_6),
+                        "recent_wkts_6": float(recent_wkts_6),
+                        "recent_boundaries_6": float(recent_boundaries_6),
+                        "dot_balls_12": float(dot_balls_12),
+                        "momentum_delta_runs_6": float(round(momentum_delta_runs_6, 4)),
+                        "striker_runs": float(striker_runs),
+                        "striker_balls": float(striker_balls),
+                        "striker_sr": float(round(striker_sr, 4)),
+                        "non_striker_runs": float(non_striker_runs),
+                        "non_striker_balls": float(non_striker_balls),
+                        "non_striker_sr": float(round(non_striker_sr, 4)),
+                        "bowler_balls": float(bowler_balls),
+                        "bowler_runs_conceded": float(bowler_runs_conceded),
+                        "bowler_wkts": float(bowler_wkts),
+                        "bowler_econ": float(round(bowler_econ, 4)),
+                        "partnership_runs": float(partnership_runs),
+                        "partnership_balls": float(partnership_balls),
+                        "partnership_run_rate": float(round(partnership_run_rate, 4)),
                         "batting_team_win": 1 if winner == batting_team else 0,
                     }
                 )
+
+                if wicket_count > 0:
+                    partnership_runs = 0.0
+                    partnership_balls = 0.0
 
         if inn_idx == 1:
             first_innings_total = score
@@ -246,8 +400,9 @@ def train(data_dir: str = DEFAULT_DATA_DIR):
     df = load_rows(data_dir)
     train_df, test_df, train_matches, test_matches = split_by_match(df)
 
-    for col in FEATURE_COLS:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    train_df[FEATURE_COLS] = train_df[FEATURE_COLS].apply(pd.to_numeric, errors="coerce")
+    test_df[FEATURE_COLS] = test_df[FEATURE_COLS].apply(pd.to_numeric, errors="coerce")
+
     train_df[FEATURE_COLS] = train_df[FEATURE_COLS].replace([np.inf, -np.inf], np.nan).fillna(0.0)
     test_df[FEATURE_COLS] = test_df[FEATURE_COLS].replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
@@ -304,31 +459,38 @@ def train(data_dir: str = DEFAULT_DATA_DIR):
 
     candidates = [
         {
-            "name": "xgboost_live_v2",
+            "name": "xgboost_live_v3",
             "model": xgb_model,
             "metrics": xgb_metrics,
-            "version": "live_ml_v2_xgb",
+            "version": "live_ml_v3_xgb",
         },
         {
-            "name": "logreg_live_v2",
+            "name": "logreg_live_v3",
             "model": lr_model,
             "metrics": lr_metrics,
-            "version": "live_ml_v2_logreg",
+            "version": "live_ml_v3_logreg",
         },
     ]
-    best = min(candidates, key=lambda c: (c["metrics"]["log_loss"], c["metrics"]["brier"], -c["metrics"]["auc"]))
+    best = min(
+        candidates,
+        key=lambda c: (
+            c["metrics"]["log_loss"],
+            c["metrics"]["brier"],
+            -c["metrics"]["auc"],
+        ),
+    )
 
     top_features = []
     if best["name"].startswith("xgboost"):
         importances = best["model"].feature_importances_
-        top_idx = np.argsort(importances)[::-1][:12]
+        top_idx = np.argsort(importances)[::-1][:15]
         top_features = [
             {"feature": FEATURE_COLS[i], "importance": round(float(importances[i]), 5)}
             for i in top_idx
         ]
     else:
         coef = best["model"].named_steps["clf"].coef_[0]
-        top_idx = np.argsort(np.abs(coef))[::-1][:12]
+        top_idx = np.argsort(np.abs(coef))[::-1][:15]
         top_features = [
             {"feature": FEATURE_COLS[i], "importance": round(float(abs(coef[i])), 5)}
             for i in top_idx
