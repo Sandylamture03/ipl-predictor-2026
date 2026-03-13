@@ -20,7 +20,7 @@ services:
     region: oregon
     plan: free
     rootDir: apps/api
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -54,3 +54,5 @@ services:
         sync: false
       - key: AUTO_TRAIN_PREMATCH
         value: "1"
+      - key: PYTHON_VERSION
+        value: 3.11.9

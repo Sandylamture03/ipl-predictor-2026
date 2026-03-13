@@ -88,6 +88,11 @@ function unwrapServiceItems(items) {
   return items.map((item) => item?.service || item).filter(Boolean);
 }
 
+function normalizeService(serviceLike) {
+  if (!serviceLike) return null;
+  return serviceLike.service || serviceLike;
+}
+
 function unwrapOwnerItems(items) {
   if (!Array.isArray(items)) return [];
   return items.map((item) => item?.owner || item).filter(Boolean);
@@ -107,7 +112,7 @@ async function resolveOwnerId() {
 
 async function findService(ownerId, name) {
   const services = unwrapServiceItems(
-    await api('GET', '/services', { query: { ownerId, name, includePreviews: 'no', limit: 20 } })
+    await api('GET', '/services', { query: { ownerId, name, limit: 50 } })
   );
   return services.find((s) => s.name === name) || null;
 }
@@ -129,7 +134,7 @@ async function upsertService(ownerId, def) {
   if (!existing) {
     console.log(`Creating service: ${def.name}`);
     const created = await createService(def.createPayload(ownerId));
-    return created;
+    return normalizeService(created);
   }
 
   if (existing.type !== def.type) {
@@ -138,7 +143,7 @@ async function upsertService(ownerId, def) {
 
   console.log(`Updating service: ${def.name}`);
   await patchService(existing.id, def.patchPayload());
-  return getService(existing.id);
+  return normalizeService(await getService(existing.id));
 }
 
 async function upsertEnvVar(serviceId, key, value) {
@@ -161,7 +166,8 @@ async function putStaticRoutes(serviceId) {
 
 async function listCustomDomains(serviceId) {
   const rows = await api('GET', `/services/${serviceId}/custom-domains`);
-  return Array.isArray(rows) ? rows : [];
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => row?.customDomain || row).filter(Boolean);
 }
 
 async function ensureCustomDomain(serviceId, domainName) {
@@ -247,7 +253,7 @@ function serviceDefs() {
           plan: 'free',
           region: 'oregon',
           envSpecificDetails: {
-            buildCommand: 'npm install && npm run build',
+            buildCommand: 'npm install --include=dev && npm run build',
             startCommand: 'npm start',
           },
           healthCheckPath: '/api/health',
@@ -264,7 +270,7 @@ function serviceDefs() {
           plan: 'free',
           region: 'oregon',
           envSpecificDetails: {
-            buildCommand: 'npm install && npm run build',
+            buildCommand: 'npm install --include=dev && npm run build',
             startCommand: 'npm start',
           },
           healthCheckPath: '/api/health',
@@ -351,6 +357,7 @@ async function run() {
     DATABASE_URL,
     AUTO_TRAIN_PREMATCH: '1',
     IPL_SEASON,
+    PYTHON_VERSION: '3.11.9',
   });
 
   await upsertEnvVars(web.id, {
