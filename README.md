@@ -121,3 +121,11 @@ To get live ball-by-ball updates during matches (starting March 28, 2026):
 | Cricsheet | Historical IPL 2008–2025 | cricsheet.org/downloads |
 | IPL Official | 2026 Fixtures & Results | iplt20.com |
 | Roanuz / CricketAPI | Live ball-by-ball | sports.roanuz.com |
+
+---
+
+## Complete Guide
+
+For full beginner-to-advanced documentation, read:
+
+- [COMPLETE_GUIDE.md](./COMPLETE_GUIDE.md)
